@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import './App.css';
+import Login from './Login';
 
 // 個別データの型
 interface Asset {
@@ -11,7 +12,7 @@ interface Asset {
   investmentDate: string;
 }
 
-// ★追加: 集計データの型
+// 集計データの型
 interface AssetSummary {
   totalInvestmentAmount: number;
   totalCurrentValue: number | null;
@@ -19,9 +20,10 @@ interface AssetSummary {
 }
 
 function App() {
+  // ★追加: サーバーに入るための「鍵」を保管する場所
+  const [authHeader, setAuthHeader] = useState<string | null>(null);
+
   const [assets, setAssets] = useState<Asset[]>([]);
-  
-  // ★追加: 集計データを入れる箱
   const [summary, setSummary] = useState<AssetSummary | null>(null);
 
   const [form, setForm] = useState({
@@ -34,84 +36,117 @@ function App() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<Asset>>({});
 
+  // ★変更: 鍵（authHeader）をゲットしたら、データを読み込みに行く
   useEffect(() => {
-    fetchAll();
-  }, []);
+    if (authHeader) {
+      fetchAll();
+    }
+  }, [authHeader]);
 
-  // ★変更: 一覧と集計の両方を取得する関数
   const fetchAll = () => {
-    // 1. 一覧を取得
-    fetch('http://localhost:8080/api/assets')
+    // 鍵がなければ何もしない（安全策）
+    if (!authHeader) return;
+
+    // 1. 一覧を取得 (ヘッダーに鍵を追加！)
+    fetch('http://localhost:8080/api/assets', {
+      headers: { 'Authorization': authHeader }
+    })
       .then((res) => res.json())
       .then((data) => setAssets(data));
 
-    // 2. 集計を取得 (Javaで作った計算ロジックを利用)
-    fetch('http://localhost:8080/api/assets/summary')
+    // 2. 集計を取得 (ヘッダーに鍵を追加！)
+    fetch('http://localhost:8080/api/assets/summary', {
+      headers: { 'Authorization': authHeader }
+    })
       .then((res) => res.json())
       .then((data) => setSummary(data));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!authHeader) return;
+
     fetch('http://localhost:8080/api/assets', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': authHeader // ★ここにも鍵を追加
+      },
       body: JSON.stringify(form),
     }).then((res) => {
       if (res.ok) {
         alert('登録しました！');
-        fetchAll(); // ★再読み込み
+        fetchAll();
         setForm({ fundName: '', investmentAmount: 0, acquisitionPrice: 0, investmentDate: '' });
       }
     });
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
-
-  const startEditing = (asset: Asset) => {
-    setEditingId(asset.id);
-    setEditForm({ ...asset });
-  };
-
-  const cancelEditing = () => {
-    setEditingId(null);
-    setEditForm({});
-  };
-
-  const handleEditChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setEditForm({ ...editForm, [e.target.name]: e.target.value });
-  };
-
   const saveUpdate = (id: number) => {
+    if (!authHeader) return;
+
     fetch(`http://localhost:8080/api/assets/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': authHeader // ★ここにも鍵を追加
+      },
       body: JSON.stringify(editForm),
     }).then((res) => {
       if (res.ok) {
         alert('更新しました！');
         setEditingId(null);
-        fetchAll(); // ★再読み込み
+        fetchAll();
       }
     });
   };
 
   const deleteAsset = (id: number) => {
     if(!window.confirm("本当に削除しますか？")) return;
+    if (!authHeader) return;
+
     fetch(`http://localhost:8080/api/assets/${id}`, {
       method: 'DELETE',
+      headers: { 
+        'Authorization': authHeader // ★削除の時も鍵が必要
+      },
     }).then(() => {
-      fetchAll(); // ★再読み込み
+      fetchAll();
     });
   };
 
+  // その他の入力処理などはそのまま
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
+  const startEditing = (asset: Asset) => {
+    setEditingId(asset.id);
+    setEditForm({ ...asset });
+  };
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditForm({});
+  };
+  const handleEditChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditForm({ ...editForm, [e.target.name]: e.target.value });
+  };
+
+  // ★変更: 鍵を持っていないときはログイン画面を出す
+  if (!authHeader) {
+    return <Login onLogin={(header) => setAuthHeader(header)} />;
+  }
+
+  // 鍵を持っていたら、いつもの資産管理画面を出す
   return (
     <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '800px', margin: '0 auto' }}>
-      <h1>💰 資産管理アプリ</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h1>💰 資産管理アプリ</h1>
+        <button onClick={() => setAuthHeader(null)} style={{ background: '#666', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px' }}>
+          ログアウト
+        </button>
+      </div>
 
-      {/* --- ★追加: トータル集計エリア --- */}
+      {/* --- トータル集計エリア --- */}
       <div style={{ display: 'flex', gap: '20px', marginBottom: '30px', padding: '15px', background: '#f8f9fa', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
         <div>
           <div style={{ fontSize: '0.9em', color: '#666' }}>総投資額</div>
